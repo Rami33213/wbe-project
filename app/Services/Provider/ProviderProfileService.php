@@ -11,6 +11,52 @@ class ProviderProfileService
     /**
      * عرض الملف العام للمزوّد
      */
+public function getOwnProfile(): \Illuminate\Http\JsonResponse
+{
+    /** @var User $provider */
+    $provider = auth()->user();
+
+    $profile = $provider->providerProfile;
+
+    if (!$profile) {
+        return response()->json([
+            'profile' => [
+                'bio' => null,
+                'years_of_experience' => null,
+                'base_price' => null,
+                'covered_areas' => [],
+                'is_available' => true,
+            ]
+        ], 200);
+    }
+
+    return response()->json([
+        'profile' => [
+            'bio' => $profile->bio,
+            'years_of_experience' => $profile->years_of_experience,
+            'base_price' => $profile->base_price,
+            'covered_areas' => $profile->covered_areas
+                ? json_decode($profile->covered_areas, true)
+                : [],
+            'is_available' => $profile->is_available,
+        ]
+    ], 200);
+}
+
+      public function listServices(): JsonResponse
+    {
+        /** @var User $provider */
+        $provider = auth()->user();
+
+        $services = $provider->services()
+            ->with('category')
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json([
+            'services' => $services,
+        ], 200);
+    }
     public function getPublicProfile($id): JsonResponse
     {
         $provider = User::with([

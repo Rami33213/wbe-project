@@ -36,7 +36,7 @@
             <div class="form-row-inline">
                 <div>
                     <label>المدينة</label>
-                    <input type="text" id="filterCity" placeholder="مثال: الرياض">
+                    <input type="text" id="filterCity" placeholder="مثال: دمشق">
                 </div>
                 <div>
                     <label>التصنيف (ID)</label>
@@ -84,7 +84,7 @@
 
                 <div class="form-row">
                     <label for="bookingNotes">ملاحظات إضافية</label>
-                    <textarea id="bookingNotes" rows="3" placeholder="مثال: الشقة غرفتين وصالة..."></textarea>
+                    <textarea id="bookingNotes" rows="3" placeholder="مثال: شقة غرفتين وصالة..."></textarea>
                 </div>
 
                 <button type="submit" class="btn-primary" id="bookingSubmitBtn">تأكيد الحجز</button>
@@ -188,7 +188,7 @@
             <div class="form-row-inline">
                 <div>
                     <label>المدينة</label>
-                    <input type="text" id="providerCity" placeholder="مثال: الدمام">
+                    <input type="text" id="providerCity" placeholder="مثال: دمشق">
                 </div>
                 <div>
                     <label>نوع الخدمة (ID أو اسم)</label>
@@ -206,6 +206,26 @@
             {{-- من /api/customer/providers/search --}}
         </div>
     </section>
+
+    {{-- مودال عرض ملف مزوّد الخدمة --}}
+    <div id="providerProfileModal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <button type="button" class="modal-close" id="closeProviderProfileModal">×</button>
+            <h2 id="modalProviderName">مزوّد خدمة</h2>
+            <p class="small-muted" id="modalProviderLocation"></p>
+            <p id="modalProviderBio"></p>
+            <p><strong>سنوات الخبرة:</strong> <span id="modalProviderExperience">-</span></p>
+            <p><strong>السعر الأساسي:</strong> <span id="modalProviderBasePrice">-</span></p>
+            <p><strong>المناطق المغطاة:</strong> <span id="modalProviderAreas">-</span></p>
+            <p><strong>متوسط التقييم:</strong> <span id="modalProviderRating">-</span></p>
+
+            <h3 style="margin-top: 1rem;">الخدمات</h3>
+            <ul id="modalProviderServices"></ul>
+
+            <h3 style="margin-top: 1rem;">بعض التقييمات</h3>
+            <ul id="modalProviderReviews"></ul>
+        </div>
+    </div>
 </div>
 @endsection
 
@@ -230,15 +250,18 @@ document.addEventListener('DOMContentLoaded', function () {
         alertBox.style.display = 'none';
         alertBox.innerHTML = '';
     }
+    function authHeaders(extra = {}) {
+        return Object.assign({
+            'Accept': 'application/json',
+            'Authorization': 'Bearer ' + token,
+        }, extra);
+    }
 
     // 1) تحميل بيانات المستخدم /me
     async function loadMe() {
         try {
             const res = await fetch('/api/me', {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             if (res.status === 401 || res.status === 403) {
@@ -249,15 +272,25 @@ document.addEventListener('DOMContentLoaded', function () {
 
             const user = await res.json();
             document.getElementById('customerName').textContent = user.name || 'مستخدم';
-            document.getElementById('customerRoleBadge').textContent =
-                user.role === 'provider' ? 'مقدّم خدمة' :
-                user.role === 'admin' ? 'مشرف' : 'زبون';
+
+            // حماية حسب الدور
+            if (user.role !== 'customer') {
+                if (user.role === 'provider') {
+                    window.location.href = '/provider';
+                    return;
+                } else if (user.role === 'admin') {
+                    window.location.href = '/admin';
+                    return;
+                }
+            }
+
+            document.getElementById('customerRoleBadge').textContent = 'زبون';
         } catch (e) {
             showError('فشل تحميل بيانات المستخدم.');
         }
     }
 
-    // 2) تبويبات
+    // 2) التبويبات
     const tabButtons = document.querySelectorAll('.tab-button');
     const tabSections = document.querySelectorAll('.tab-section');
 
@@ -266,46 +299,42 @@ document.addEventListener('DOMContentLoaded', function () {
             const target = btn.dataset.target;
             tabButtons.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
+
             tabSections.forEach(sec => {
                 if (sec.id === target) sec.classList.add('active');
                 else sec.classList.remove('active');
             });
 
-            // تحميل القسم عند الحاجة
-            if (target === 'servicesSection') loadServices();
-            if (target === 'bookingsSection') loadBookings();
-            if (target === 'reviewsSection') loadReviews();
+            if (target === 'servicesSection')      loadServices();
+            if (target === 'bookingsSection')      loadBookings();
+            if (target === 'reviewsSection')       loadReviews();
             if (target === 'notificationsSection') loadNotifications();
         });
     });
 
     // 3) الخدمات + الحجز
-    const servicesList = document.getElementById('servicesList');
+    const servicesList       = document.getElementById('servicesList');
     const servicesFilterForm = document.getElementById('servicesFilterForm');
 
     async function loadServices() {
         clearError();
         servicesList.innerHTML = '<p>جاري تحميل الخدمات...</p>';
 
-        const params = new URLSearchParams();
-        const city = document.getElementById('filterCity').value;
-        const catId = document.getElementById('filterCategoryId').value;
-        const priceMin = document.getElementById('filterPriceMin').value;
-        const priceMax = document.getElementById('filterPriceMax').value;
+        const params    = new URLSearchParams();
+        const city      = document.getElementById('filterCity').value;
+        const catId     = document.getElementById('filterCategoryId').value;
+        const priceMin  = document.getElementById('filterPriceMin').value;
+        const priceMax  = document.getElementById('filterPriceMax').value;
 
-        if (city) params.append('city', city);
-        if (catId) params.append('category_id', catId);
+        if (city)     params.append('city', city);
+        if (catId)    params.append('category_id', catId);
         if (priceMin) params.append('price_min', priceMin);
         if (priceMax) params.append('price_max', priceMax);
 
         try {
-            // ⚠️ نفترض عندك route API مثل:
-            // Route::get('/customer/services', [CustomerServiceController::class, 'index']);
-            const res = await fetch('/api/customer/services?' + params.toString(), {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+            // ✅ هنا التعديل: نستخدم /api/services بدل /api/customer/services
+            const res = await fetch('/api/services?' + params.toString(), {
+                headers: authHeaders(),
             });
 
             if (!res.ok) {
@@ -313,7 +342,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 return;
             }
 
-            const data = await res.json();
+            const data     = await res.json();
             const services = data.services?.data || data.services || [];
 
             if (!services.length) {
@@ -323,7 +352,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
             servicesList.innerHTML = '';
             services.forEach(service => {
-                const card = document.createElement('div');
+                const card    = document.createElement('div');
                 card.className = 'card';
 
                 const provider = service.provider || {};
@@ -338,15 +367,23 @@ document.addEventListener('DOMContentLoaded', function () {
                     </p>
                     <p class="price-range">
                         السعر التقريبي:
-                        ${service.price_min ?? '-'} إلى ${service.price_max ?? '-'} ريال
+                        ${service.price_min ?? '-'} إلى ${service.price_max ?? '-'} ل.س
                     </p>
-                    <button class="btn-primary-small book-service-btn"
-                        data-service-id="${service.id}"
-                        data-provider-id="${service.provider_id}"
-                        data-service-name="${service.name ?? ''}"
-                        data-provider-name="${provider.name ?? ''}">
-                        حجز هذه الخدمة
-                    </button>
+                    <div class="card-actions">
+                        <button class="btn-primary-small book-service-btn"
+                            data-service-id="${service.id}"
+                            data-provider-id="${service.provider_id}"
+                            data-service-name="${service.name ?? ''}"
+                            data-provider-name="${provider.name ?? ''}">
+                            حجز هذه الخدمة
+                        </button>
+                        ${provider.id
+                            ? `<button class="btn-secondary-small view-provider-btn"
+                                data-provider-id="${provider.id}">
+                                عرض ملف المزوّد
+                               </button>`
+                            : ''}
+                    </div>
                 `;
 
                 servicesList.appendChild(card);
@@ -354,6 +391,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
             document.querySelectorAll('.book-service-btn').forEach(btn => {
                 btn.addEventListener('click', () => openBookingForm(btn.dataset));
+            });
+
+            document.querySelectorAll('.view-provider-btn').forEach(btn => {
+                btn.addEventListener('click', () => openProviderProfile(btn.dataset.providerId));
             });
 
         } catch (e) {
@@ -368,13 +409,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // فورم الحجز
     const bookingFormContainer = document.getElementById('bookingFormContainer');
-    const bookingServiceInfo = document.getElementById('bookingServiceInfo');
-    const bookingForm = document.getElementById('bookingForm');
-    const bookingCancelBtn = document.getElementById('bookingCancelBtn');
-    const bookingSubmitBtn = document.getElementById('bookingSubmitBtn');
+    const bookingServiceInfo   = document.getElementById('bookingServiceInfo');
+    const bookingForm          = document.getElementById('bookingForm');
+    const bookingCancelBtn     = document.getElementById('bookingCancelBtn');
+    const bookingSubmitBtn     = document.getElementById('bookingSubmitBtn');
 
     function openBookingForm(data) {
-        document.getElementById('bookingServiceId').value = data.serviceId;
+        document.getElementById('bookingServiceId').value  = data.serviceId;
         document.getElementById('bookingProviderId').value = data.providerId;
         bookingServiceInfo.innerHTML = `
             حجز خدمة: <strong>${data.serviceName}</strong> مع
@@ -394,25 +435,21 @@ document.addEventListener('DOMContentLoaded', function () {
         clearError();
 
         const payload = {
-            service_id: document.getElementById('bookingServiceId').value,
+            service_id:  document.getElementById('bookingServiceId').value,
             provider_id: document.getElementById('bookingProviderId').value,
-            date: document.getElementById('bookingDate').value,
-            start_time: document.getElementById('bookingStartTime').value,
-            end_time: document.getElementById('bookingEndTime').value || null,
-            notes: document.getElementById('bookingNotes').value || null,
+            date:        document.getElementById('bookingDate').value,
+            start_time:  document.getElementById('bookingStartTime').value,
+            end_time:    document.getElementById('bookingEndTime').value || null,
+            notes:       document.getElementById('bookingNotes').value || null,
         };
 
-        bookingSubmitBtn.disabled = true;
+        bookingSubmitBtn.disabled  = true;
         bookingSubmitBtn.textContent = 'جاري إنشاء الحجز...';
 
         try {
             const res = await fetch('/api/customer/bookings', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify(payload),
             });
 
@@ -424,20 +461,19 @@ document.addEventListener('DOMContentLoaded', function () {
                 bookingFormContainer.style.display = 'none';
                 bookingForm.reset();
                 loadBookings();
-                // ممكن نحول تلقائياً لتبويب الحجوزات
             }
         } catch (e) {
             showError('خطأ في الاتصال بالخادم أثناء إنشاء الحجز.');
         } finally {
-            bookingSubmitBtn.disabled = false;
+            bookingSubmitBtn.disabled  = false;
             bookingSubmitBtn.textContent = 'تأكيد الحجز';
         }
     });
 
     // 4) حجوزاتي
-    const bookingsTableBody = document.getElementById('bookingsTableBody');
-    const bookingDetails = document.getElementById('bookingDetails');
-    const bookingDetailsContent = document.getElementById('bookingDetailsContent');
+    const bookingsTableBody    = document.getElementById('bookingsTableBody');
+    const bookingDetails       = document.getElementById('bookingDetails');
+    const bookingDetailsContent= document.getElementById('bookingDetailsContent');
 
     async function loadBookings() {
         clearError();
@@ -445,10 +481,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         try {
             const res = await fetch('/api/customer/bookings', {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             if (!res.ok) {
@@ -456,7 +489,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 return;
             }
 
-            const data = await res.json();
+            const data     = await res.json();
             const bookings = data.bookings || [];
 
             if (!bookings.length) {
@@ -488,17 +521,11 @@ document.addEventListener('DOMContentLoaded', function () {
             });
 
             bookingsTableBody.querySelectorAll('button').forEach(btn => {
-                const id = btn.dataset.id;
+                const id     = btn.dataset.id;
                 const action = btn.dataset.action;
-                if (action === 'details') {
-                    btn.addEventListener('click', () => loadBookingDetails(id));
-                }
-                if (action === 'cancel') {
-                    btn.addEventListener('click', () => cancelBooking(id));
-                }
-                if (action === 'review') {
-                    btn.addEventListener('click', () => openReviewForm(id));
-                }
+                if (action === 'details') btn.addEventListener('click', () => loadBookingDetails(id));
+                if (action === 'cancel')  btn.addEventListener('click', () => cancelBooking(id));
+                if (action === 'review')  btn.addEventListener('click', () => openReviewForm(id));
             });
 
         } catch (e) {
@@ -508,15 +535,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
     async function loadBookingDetails(id) {
         clearError();
-        bookingDetails.style.display = 'block';
-        bookingDetailsContent.innerHTML = 'جاري تحميل التفاصيل...';
+        bookingDetails.style.display     = 'block';
+        bookingDetailsContent.innerHTML  = 'جاري تحميل التفاصيل...';
 
         try {
             const res = await fetch('/api/customer/bookings/' + id, {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             const data = await res.json();
@@ -540,16 +564,13 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function cancelBooking(id) {
-        if (!confirm('هل أنت متأكد من إلغاء هذا الحجز؟ قد لا يمكن التراجع.')) return;
+        if (!confirm('هل أنت متأكد من إلغاء هذا الحجز؟')) return;
         clearError();
 
         try {
             const res = await fetch(`/api/customer/bookings/${id}/cancel`, {
                 method: 'PATCH',
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             const data = await res.json();
@@ -566,11 +587,11 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // 5) التقييمات
     const reviewFormContainer = document.getElementById('reviewFormContainer');
-    const reviewBookingInfo = document.getElementById('reviewBookingInfo');
-    const reviewForm = document.getElementById('reviewForm');
-    const reviewCancelBtn = document.getElementById('reviewCancelBtn');
-    const reviewSubmitBtn = document.getElementById('reviewSubmitBtn');
-    const reviewsList = document.getElementById('reviewsList');
+    const reviewBookingInfo   = document.getElementById('reviewBookingInfo');
+    const reviewForm          = document.getElementById('reviewForm');
+    const reviewCancelBtn     = document.getElementById('reviewCancelBtn');
+    const reviewSubmitBtn     = document.getElementById('reviewSubmitBtn');
+    const reviewsList         = document.getElementById('reviewsList');
 
     function openReviewForm(bookingId) {
         document.getElementById('reviewBookingId').value = bookingId;
@@ -589,22 +610,18 @@ document.addEventListener('DOMContentLoaded', function () {
         clearError();
 
         const bookingId = document.getElementById('reviewBookingId').value;
-        const payload = {
-            rating: document.getElementById('reviewRating').value,
+        const payload   = {
+            rating:  document.getElementById('reviewRating').value,
             comment: document.getElementById('reviewComment').value || null,
         };
 
-        reviewSubmitBtn.disabled = true;
+        reviewSubmitBtn.disabled  = true;
         reviewSubmitBtn.textContent = 'جاري إرسال التقييم...';
 
         try {
             const res = await fetch(`/api/customer/reviews/${bookingId}`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify(payload),
             });
 
@@ -620,7 +637,7 @@ document.addEventListener('DOMContentLoaded', function () {
         } catch (e) {
             showError('خطأ في الاتصال بالخادم أثناء إرسال التقييم.');
         } finally {
-            reviewSubmitBtn.disabled = false;
+            reviewSubmitBtn.disabled  = false;
             reviewSubmitBtn.textContent = 'إرسال التقييم';
         }
     });
@@ -631,10 +648,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         try {
             const res = await fetch('/api/customer/reviews', {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             const data = await res.json();
@@ -678,10 +692,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         try {
             const res = await fetch('/api/customer/notifications', {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             const data = await res.json();
@@ -715,28 +726,25 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // 7) بحث عن مقدمي الخدمة
     const providersSearchForm = document.getElementById('providersSearchForm');
-    const providersList = document.getElementById('providersList');
+    const providersList       = document.getElementById('providersList');
 
     providersSearchForm.addEventListener('submit', async function (e) {
         e.preventDefault();
         clearError();
         providersList.innerHTML = '<p>جاري البحث...</p>';
 
-        const params = new URLSearchParams();
-        const city = document.getElementById('providerCity').value;
-        const service = document.getElementById('providerService').value;
-        const keyword = document.getElementById('providerKeyword').value;
+        const params   = new URLSearchParams();
+        const city     = document.getElementById('providerCity').value;
+        const service  = document.getElementById('providerService').value;
+        const keyword  = document.getElementById('providerKeyword').value;
 
-        if (city) params.append('city', city);
+        if (city)    params.append('city', city);
         if (service) params.append('service', service);
         if (keyword) params.append('q', keyword);
 
         try {
             const res = await fetch('/api/customer/providers/search?' + params.toString(), {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             const data = await res.json();
@@ -762,19 +770,100 @@ document.addEventListener('DOMContentLoaded', function () {
                         المدينة: ${p.location_city ?? '-'}<br>
                         المنطقة: ${p.location_area ?? '-'}
                     </p>
-                    <p>خبرة: ${p.experience_years ?? '-'} سنوات</p>
                     <p>متوسط تقييم: ${p.avg_rating ?? 'غير متوفر'}</p>
+                    <button class="btn-secondary-small view-provider-btn" data-provider-id="${p.id}">
+                        عرض ملف المزوّد
+                    </button>
                 `;
                 providersList.appendChild(card);
             });
+
+            providersList.querySelectorAll('.view-provider-btn').forEach(btn => {
+                btn.addEventListener('click', () => openProviderProfile(btn.dataset.providerId));
+            });
+
         } catch (e) {
             providersList.innerHTML = '<p>خطأ في الاتصال بالخادم.</p>';
         }
     });
 
-    // تحميل افتراضي للخدمات أولاً
+    // 8) مودال ملف مزوّد الخدمة
+    const providerProfileModal     = document.getElementById('providerProfileModal');
+    const closeProviderProfileModal= document.getElementById('closeProviderProfileModal');
+
+    async function openProviderProfile(providerId) {
+        clearError();
+
+        try {
+            const res = await fetch('/api/providers/' + providerId, {
+                headers: authHeaders(),
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                showError(data.message || 'فشل تحميل ملف مزوّد الخدمة.');
+                return;
+            }
+
+            const p = data.provider;
+
+            document.getElementById('modalProviderName').textContent = p.name ?? 'مزوّد خدمة';
+            document.getElementById('modalProviderLocation').textContent =
+                `المدينة: ${p.location_city ?? '-'} - المنطقة: ${p.location_area ?? '-'}`;
+            document.getElementById('modalProviderBio').textContent =
+                p.bio ?? 'لا توجد نبذة تعريفية.';
+            document.getElementById('modalProviderExperience').textContent =
+                p.years_of_experience ?? '-';
+            document.getElementById('modalProviderBasePrice').textContent =
+                p.base_price ?? '-';
+            document.getElementById('modalProviderAreas').textContent =
+                (p.covered_areas && p.covered_areas.length)
+                    ? p.covered_areas.join(', ')
+                    : '-';
+            document.getElementById('modalProviderRating').textContent =
+                p.average_rating ?? '-';
+
+            const servicesUl = document.getElementById('modalProviderServices');
+            servicesUl.innerHTML = '';
+            (p.services || []).forEach(s => {
+                const li = document.createElement('li');
+                li.textContent = `${s.name} (${s.price_min} - ${s.price_max})`;
+                servicesUl.appendChild(li);
+            });
+
+            const reviewsUl = document.getElementById('modalProviderReviews');
+            reviewsUl.innerHTML = '';
+            (p.reviews || []).slice(0, 5).forEach(r => {
+                const li = document.createElement('li');
+                li.innerHTML = `
+                    <strong>${'⭐'.repeat(r.rating ?? 0)}</strong>
+                    - ${r.customer?.name ?? 'مستخدم'}
+                    <br>
+                    <span>${r.comment ?? 'بدون تعليق'}</span>
+                `;
+                reviewsUl.appendChild(li);
+            });
+
+            providerProfileModal.style.display = 'block';
+        } catch (e) {
+            showError('خطأ في الاتصال بالخادم أثناء تحميل ملف مزوّد الخدمة.');
+        }
+    }
+
+    closeProviderProfileModal.addEventListener('click', function () {
+        providerProfileModal.style.display = 'none';
+    });
+
+    // إغلاق المودال عند الضغط خارج المحتوى
+    window.addEventListener('click', function (e) {
+        if (e.target === providerProfileModal) {
+            providerProfileModal.style.display = 'none';
+        }
+    });
+
+    // تحميل افتراضي
     loadMe();
-    loadServices();
+    loadServices();     // لعرض قائمة الخدمات مباشرة
 });
 </script>
 @endsection

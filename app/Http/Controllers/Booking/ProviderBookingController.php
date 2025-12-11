@@ -18,8 +18,18 @@ class ProviderBookingController extends Controller
     }
 
     public function updateStatus(UpdateBookingStatusRequest $request, $id)
-    {
-        return $this->bookingService->updateBookingStatus(Auth::id(), $id, $request->validated()['status']);
-    }
+{
+    $data = $request->validated();
+    $status = $data['status'];
+    $reason = $data['reason'] ?? null;
+
+    return $this->bookingService->updateBookingStatus(
+        Auth::id(),
+        $id,
+        $status,
+        $reason
+    );
+}
+
     
 }

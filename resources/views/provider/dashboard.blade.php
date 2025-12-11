@@ -99,7 +99,7 @@
         <form id="providerProfileForm" class="auth-form booking-form-container">
             <div class="form-row">
                 <label for="profileBio">نبذة تعريفية</label>
-                <textarea id="profileBio" rows="3" placeholder="مثال: فني كهرباء بخبرة 8 سنوات..."></textarea>
+                <textarea id="profileBio" rows="3" placeholder="مثال: مزوّدة خدمات تنظيف وصيانة منزلية بخبرة 5 سنوات..."></textarea>
             </div>
 
             <div class="form-row">
@@ -114,7 +114,7 @@
 
             <div class="form-row">
                 <label for="profileAreas">المناطق المغطاة (افصل بين المناطق بفاصلة ,)</label>
-                <input type="text" id="profileAreas" placeholder="مثال: حي النرجس, حي الندى, حي الياسمين">
+                <input type="text" id="profileAreas" placeholder="مثال: دمشق - المزة, دمشق - المالكي">
             </div>
 
             <div class="form-row">
@@ -175,25 +175,33 @@ document.addEventListener('DOMContentLoaded', function () {
         return;
     }
 
+    // دوال مساعدة
     function showError(msg) {
         if (!alertBox) return;
         alertBox.style.display = 'block';
         alertBox.innerHTML = msg;
     }
+
     function clearError() {
         if (!alertBox) return;
         alertBox.style.display = 'none';
         alertBox.innerHTML = '';
     }
 
-    // 1) تحميل بيانات المستخدم والتأكد أنه provider
+    function authHeaders(extra = {}) {
+        return Object.assign({
+            'Accept': 'application/json',
+            'Authorization': 'Bearer ' + token,
+        }, extra);
+    }
+
+    // ================================
+    // 1) تحميل بيانات المستخدم (me)
+    // ================================
     async function loadMe() {
         try {
             const res = await fetch('/api/me', {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             if (res.status === 401 || res.status === 403) {
@@ -203,11 +211,18 @@ document.addEventListener('DOMContentLoaded', function () {
             }
 
             const user = await res.json();
+
             document.getElementById('providerName').textContent = user.name || 'مستخدم';
 
             if (user.role !== 'provider') {
-                // حماية بسيطة: لو الدور ليس مقدّم خدمة، رجّعه مثلاً على /customer أو /login
-                window.location.href = user.role === 'customer' ? '/customer' : '/login';
+                // حماية: لو مو مزوّد رجّعيه على صفحة تناسب دوره
+                if (user.role === 'customer') {
+                    window.location.href = '/customer';
+                } else if (user.role === 'admin') {
+                    window.location.href = '/admin';
+                } else {
+                    window.location.href = '/login';
+                }
                 return;
             }
 
@@ -217,21 +232,25 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    // تبويبات
+    // ================================
+    // تبويبات الواجهة
+    // ================================
     const tabButtons = document.querySelectorAll('.tab-button');
     const tabSections = document.querySelectorAll('.tab-section');
 
     tabButtons.forEach(btn => {
         btn.addEventListener('click', () => {
             const target = btn.dataset.target;
+
             tabButtons.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
+
             tabSections.forEach(sec => {
                 if (sec.id === target) sec.classList.add('active');
                 else sec.classList.remove('active');
             });
 
-            // تحميل عند فتح التبويب
+            // تحميل حسب التبويب
             if (target === 'providerBookingsSection') loadProviderBookings();
             if (target === 'availabilitySection') loadAvailability();
             if (target === 'profileSection') loadProviderProfile();
@@ -250,15 +269,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
         try {
             const res = await fetch('/api/provider/bookings', {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             const data = await res.json();
             if (!res.ok) {
                 providerBookingsTableBody.innerHTML = '<tr><td colspan="7">فشل تحميل الحجوزات.</td></tr>';
+                showError(data.message || 'خطأ في تحميل الحجوزات.');
                 return;
             }
 
@@ -280,10 +297,10 @@ document.addEventListener('DOMContentLoaded', function () {
                     <td>${b.status ?? '-'}</td>
                     <td>
                         <select data-id="${b.id}" class="status-select">
-                            <option value="pending" ${b.status === 'pending' ? 'selected' : ''}>قيد الانتظار</option>
+                            <option value="pending"   ${b.status === 'pending'   ? 'selected' : ''}>قيد الانتظار</option>
                             <option value="confirmed" ${b.status === 'confirmed' ? 'selected' : ''}>مؤكد</option>
                             <option value="completed" ${b.status === 'completed' ? 'selected' : ''}>مكتمل</option>
-                            <option value="rejected" ${b.status === 'rejected' ? 'selected' : ''}>مرفوض</option>
+                            <option value="rejected"  ${b.status === 'rejected'  ? 'selected' : ''}>مرفوض</option>
                         </select>
                         <button class="btn-primary-small save-status-btn" data-id="${b.id}">
                             حفظ
@@ -293,7 +310,6 @@ document.addEventListener('DOMContentLoaded', function () {
                 providerBookingsTableBody.appendChild(tr);
             });
 
-            // ربط الأحداث
             providerBookingsTableBody.querySelectorAll('.save-status-btn').forEach(btn => {
                 btn.addEventListener('click', async () => {
                     const id = btn.dataset.id;
@@ -305,33 +321,38 @@ document.addEventListener('DOMContentLoaded', function () {
 
         } catch (e) {
             providerBookingsTableBody.innerHTML = '<tr><td colspan="7">خطأ في الاتصال بالخادم.</td></tr>';
+            showError('تعذر الاتصال بالخادم أثناء تحميل الحجوزات.');
         }
     }
 
-    async function updateBookingStatus(id, status) {
-        clearError();
-        try {
-            const res = await fetch(`/api/provider/bookings/${id}/status`, {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
-                body: JSON.stringify({ status }),
-            });
+   async function updateBookingStatus(id, status) {
+    clearError();
 
-            const data = await res.json();
-            if (!res.ok) {
-                showError(data.message || 'فشل تحديث حالة الحجز.');
-            } else {
-                alert(data.message || 'تم تحديث حالة الحجز بنجاح.');
-                loadProviderBookings();
-            }
-        } catch (e) {
-            showError('خطأ في الاتصال بالخادم أثناء تحديث الحالة.');
-        }
+    let reason = null;
+    if (status === 'rejected') {
+        reason = prompt('ما سبب رفض الحجز؟ (اختياري)');
+        // لو المستخدم ضغط Cancel أو تركه فاضي، يظل null عادي
     }
+
+    try {
+        const res = await fetch(`/api/provider/bookings/${id}/status`, {
+            method: 'PATCH',
+            headers: authHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ status, reason }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+            showError(data.message || 'فشل تحديث حالة الحجز.');
+        } else {
+            alert(data.message || 'تم تحديث حالة الحجز بنجاح.');
+            loadProviderBookings();
+        }
+    } catch (e) {
+        showError('خطأ في الاتصال بالخادم أثناء تحديث الحالة.');
+    }
+}
+
 
     // ================================
     // 3) توفّر المواعيد
@@ -356,11 +377,7 @@ document.addEventListener('DOMContentLoaded', function () {
         try {
             const res = await fetch('/api/provider/availability', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify(payload),
             });
 
@@ -386,15 +403,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
         try {
             const res = await fetch('/api/provider/availability', {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             const data = await res.json();
             if (!res.ok) {
                 availabilityTableBody.innerHTML = '<tr><td colspan="5">فشل تحميل المواعيد.</td></tr>';
+                showError(data.message || 'خطأ في تحميل المواعيد.');
                 return;
             }
 
@@ -413,9 +428,7 @@ document.addEventListener('DOMContentLoaded', function () {
                     <td>${s.start_time}</td>
                     <td>${s.end_time}</td>
                     <td>
-                        <button class="btn-danger-link btn-link" data-id="${s.id}">
-                            حذف
-                        </button>
+                        <button class="btn-danger-link btn-link" data-id="${s.id}">حذف</button>
                     </td>
                 `;
                 availabilityTableBody.appendChild(tr);
@@ -427,6 +440,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         } catch (e) {
             availabilityTableBody.innerHTML = '<tr><td colspan="5">خطأ في الاتصال بالخادم.</td></tr>';
+            showError('تعذر الاتصال بالخادم أثناء تحميل المواعيد.');
         }
     }
 
@@ -437,10 +451,7 @@ document.addEventListener('DOMContentLoaded', function () {
         try {
             const res = await fetch(`/api/provider/availability/${id}`, {
                 method: 'DELETE',
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             const data = await res.json();
@@ -456,40 +467,49 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // ================================
-    // 4) الملف المهني
+    // 4) الملف المهني (Profile)
     // ================================
     const providerProfileForm = document.getElementById('providerProfileForm');
     const profileSubmitBtn = document.getElementById('profileSubmitBtn');
 
     async function loadProviderProfile() {
         clearError();
-        // نفترض عندك راوت GET يرجع بروفايل المزود (لو ما في، بتضل الحقول فاضية وتقدري تعبّيها من جديد)
         try {
             const res = await fetch('/api/provider/profile', {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             if (!res.ok) {
-                // مو ضروري نعتبره خطأ قاتل
+                // لو ما فيه بروفايل بعد، نخلي الحقول فاضية بدون Error مزعج
                 return;
             }
 
             const data = await res.json();
+            // نتوقع { profile: {...} }
             const p = data.profile || data.provider || {};
 
             document.getElementById('profileBio').value = p.bio ?? '';
             document.getElementById('profileExperience').value = p.years_of_experience ?? '';
             document.getElementById('profileBasePrice').value = p.base_price ?? '';
+
             if (Array.isArray(p.covered_areas)) {
                 document.getElementById('profileAreas').value = p.covered_areas.join(', ');
+            } else if (typeof p.covered_areas === 'string') {
+                // لو جاية كنص JSON
+                try {
+                    const arr = JSON.parse(p.covered_areas);
+                    if (Array.isArray(arr)) {
+                        document.getElementById('profileAreas').value = arr.join(', ');
+                    }
+                } catch (e) {
+                    // نتجاهل
+                }
             }
-            document.getElementById('profileIsAvailable').checked = p.is_available ?? true;
+
+            document.getElementById('profileIsAvailable').checked = (p.is_available ?? true);
 
         } catch (e) {
-            // نتجاهله بصمت أو نعرض رسالة خفيفة
+            // ممكن تجاهل أو رسالة خفيفة
         }
     }
 
@@ -517,11 +537,7 @@ document.addEventListener('DOMContentLoaded', function () {
         try {
             const res = await fetch('/api/provider/profile', {
                 method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify(payload),
             });
 
@@ -542,14 +558,13 @@ document.addEventListener('DOMContentLoaded', function () {
     // ================================
     // 5) خدماتي (التخصصات)
     // ================================
-    const providerServicesForm = document.getElementById('providerServicesForm');
+    const providerServicesForm      = document.getElementById('providerServicesForm');
     const providerServicesTableBody = document.getElementById('providerServicesTableBody');
-    const addServiceRowBtn = document.getElementById('addServiceRowBtn');
-    const servicesSubmitBtn = document.getElementById('servicesSubmitBtn');
+    const addServiceRowBtn          = document.getElementById('addServiceRowBtn');
+    const servicesSubmitBtn         = document.getElementById('servicesSubmitBtn');
 
     function addServiceRow(service = {}) {
         const tr = document.createElement('tr');
-
         const id = service.id ?? '';
 
         tr.innerHTML = `
@@ -558,7 +573,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 <input type="text" class="service-name" value="${service.name ?? ''}" required>
             </td>
             <td>
-                <input type="number" class="service-category" value="${service.category_id ?? ''}" required>
+                <input type="number" class="service-category" value="${service.category_id ?? ''}" required min="1">
             </td>
             <td>
                 <input type="number" class="service-price-min" value="${service.price_min ?? ''}" required min="0">
@@ -589,23 +604,24 @@ document.addEventListener('DOMContentLoaded', function () {
         providerServicesTableBody.innerHTML = '<tr><td colspan="6">جاري تحميل الخدمات...</td></tr>';
 
         try {
-            // نفترض عندك راوت GET /api/provider/services يرجع خدمات المزود
             const res = await fetch('/api/provider/services', {
-                headers: {
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders(),
             });
 
             const data = await res.json();
+
             if (!res.ok) {
-                providerServicesTableBody.innerHTML = '<tr><td colspan="6">فشل تحميل الخدمات، يمكنك إضافة خدمات جديدة يدويًا.</td></tr>';
+                providerServicesTableBody.innerHTML =
+                    '<tr><td colspan="6">فشل تحميل الخدمات، يمكنك إضافة خدمات جديدة يدويًا.</td></tr>';
+                showError(data.message || 'خطأ في تحميل خدمات المزوّد.');
                 return;
             }
 
             const services = data.services || data.data || [];
+
             if (!services.length) {
-                providerServicesTableBody.innerHTML = '';
+                providerServicesTableBody.innerHTML =
+                    '<tr><td colspan="6">لا توجد خدمات بعد، يمكنك إضافة خدمات جديدة.</td></tr>';
                 return;
             }
 
@@ -613,7 +629,9 @@ document.addEventListener('DOMContentLoaded', function () {
             services.forEach(s => addServiceRow(s));
 
         } catch (e) {
-            providerServicesTableBody.innerHTML = '<tr><td colspan="6">خطأ في الاتصال، يمكنك إضافة خدمات جديدة يدويًا.</td></tr>';
+            providerServicesTableBody.innerHTML =
+                '<tr><td colspan="6">خطأ في الاتصال، يمكنك إضافة خدمات جديدة يدويًا.</td></tr>';
+            showError('تعذر الاتصال بالخادم أثناء تحميل الخدمات.');
         }
     }
 
@@ -631,12 +649,12 @@ document.addEventListener('DOMContentLoaded', function () {
         let valid = true;
 
         rows.forEach(tr => {
-            const id = tr.querySelector('.service-id').value || null;
-            const name = tr.querySelector('.service-name').value.trim();
-            const category_id = tr.querySelector('.service-category').value;
-            const price_min = tr.querySelector('.service-price-min').value;
-            const price_max = tr.querySelector('.service-price-max').value;
-            const description = tr.querySelector('.service-description').value || null;
+            const id           = tr.querySelector('.service-id').value || null;
+            const name         = tr.querySelector('.service-name').value.trim();
+            const category_id  = tr.querySelector('.service-category').value;
+            const price_min    = tr.querySelector('.service-price-min').value;
+            const price_max    = tr.querySelector('.service-price-max').value;
+            const description  = tr.querySelector('.service-description').value || null;
 
             if (!name || !category_id || !price_min || !price_max) {
                 valid = false;
@@ -653,7 +671,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
 
         if (!valid) {
-            showError('تأكّد من تعبئة الحقول المطلوبة لكل خدمة.');
+            showError('تأكّدي من تعبئة الحقول المطلوبة لكل خدمة.');
             return;
         }
 
@@ -663,20 +681,16 @@ document.addEventListener('DOMContentLoaded', function () {
         try {
             const res = await fetch('/api/provider/services', {
                 method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'Authorization': 'Bearer ' + token,
-                },
+                headers: authHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ services: servicesPayload }),
             });
 
             const data = await res.json();
+
             if (!res.ok) {
                 showError(data.message || 'فشل حفظ الخدمات.');
             } else {
                 alert(data.message || 'تم حفظ الخدمات بنجاح.');
-                // إعادة تحميل الخدمات مع الـ id الجديدة
                 loadProviderServices();
             }
         } catch (e) {
@@ -687,9 +701,13 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     });
 
-    // تحميل افتراضي لأول تبويب
+    // ================================
+    // تشغيل أوّل تحميل افتراضي
+    // ================================
     loadMe();
-    loadProviderBookings();
+    loadProviderBookings();   // أول تبويب
+    loadAvailability();       // عادي لو يجهز من الآن
+    loadProviderProfile();    // يحمّل ملفك المهني
 });
 </script>
 @endsection

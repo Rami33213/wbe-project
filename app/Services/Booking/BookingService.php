@@ -60,40 +60,59 @@ class BookingService
         return response()->json(['bookings' => $bookings], 200);
     }
 
-    public function updateBookingStatus($providerId, $bookingId, $newStatus)
-    {
-        $booking = Booking::where('id', $bookingId)
-            ->where('provider_id', $providerId)
-            ->with(['customer'])
-            ->first();
+   public function updateBookingStatus($providerId, $bookingId, $newStatus, ?string $reason = null)
+{
+    $booking = Booking::where('id', $bookingId)
+        ->where('provider_id', $providerId)
+        ->with(['customer'])
+        ->first();
 
-        if (!$booking) {
-            return response()->json(['message' => 'Booking not found or not assigned to this provider'], 404);
-        }
-
-        $oldStatus = $booking->status;
-
-        $booking->update(['status' => $newStatus]);
-
-        BookingLog::create([
-            'booking_id' => $booking->id,
-            'changed_by' => $providerId,
-            'old_status' => $oldStatus,
-            'new_status' => $newStatus,
-        ]);
-
-        if ($booking->customer) {
-            $booking->customer->notify(
-                new SimpleNotification("🔔 تم تغيير حالة حجزك رقم #{$booking->id} من {$oldStatus} إلى {$newStatus}")
-            );
-        }
-
-        return response()->json([
-            'message' => 'Booking status updated successfully',
-            'booking' => $booking
-        ], 200);
+    if (!$booking) {
+        return response()->json(['message' => 'Booking not found or not assigned to this provider'], 404);
     }
 
+    $oldStatus = $booking->status;
+
+    // تحديث حالة الحجز
+    $booking->status = $newStatus;
+
+    // لو الحالة رفض → خزّن السبب في الحجز نفسه
+    if ($newStatus === 'rejected') {
+        $booking->reject_reason = $reason;
+    }
+
+    $booking->save();
+
+    // سجل في booking_logs
+    BookingLog::create([
+        'booking_id' => $booking->id,
+        'changed_by' => $providerId,
+        'old_status' => $oldStatus,
+        'new_status' => $newStatus,
+        'reason'     => $reason,
+    ]);
+
+    // إشعار الزبون
+    if ($booking->customer) {
+        $msg = match ($newStatus) {
+            'confirmed' => "✅ تم قبول حجزك رقم #{$booking->id}",
+            'completed' => "🎉 تم تنفيذ حجزك رقم #{$booking->id}. نتمنى أن تكون التجربة جيدة!",
+            'rejected'  => "❌ تم رفض حجزك رقم #{$booking->id}" .
+                           ($reason ? " - السبب: {$reason}" : ''),
+            'cancelled' => "⚠️ تم إلغاء حجزك رقم #{$booking->id}.",
+            default     => "🔔 تم تحديث حالة حجزك رقم #{$booking->id} إلى {$newStatus}",
+        };
+
+        $booking->customer->notify(
+            new SimpleNotification($msg)
+        );
+    }
+
+    return response()->json([
+        'message' => 'Booking status updated successfully',
+        'booking' => $booking,
+    ], 200);
+}
 
     public function cancelBooking($customerId, $bookingId)
 {

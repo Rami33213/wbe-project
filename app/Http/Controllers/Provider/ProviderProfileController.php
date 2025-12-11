@@ -15,9 +15,15 @@ class ProviderProfileController extends Controller
     {
         return $this->profileService->updateProfile($request);
     }
-    public function updateServices(Request $request)
-{
-    return $this->profileService->updateServices($request);
-}
 
+    // ✅ جديد: ترجع خدمات المزوّد الحالي
+    public function listServices()
+    {
+        return $this->profileService->listServices();
+    }
+
+    public function updateServices(Request $request)
+    {
+        return $this->profileService->updateServices($request);
+    }
 }
